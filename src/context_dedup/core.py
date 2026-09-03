@@ -8,7 +8,7 @@ from numbers import Real
 from typing import Any
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.8
-DEFAULT_CONTAINMENT_THRESHOLD = 0.8
+DEFAULT_CONTAINMENT_THRESHOLD = 0.65
 
 
 def _normalize(text: str) -> str:
