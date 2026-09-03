@@ -112,7 +112,7 @@ Report issues in the [GitHub issue tracker](https://github.com/edujbarrios/conte
 
 ## Author
 
-Eduardo J. Barrios — [edujbarrios@outlook.com](mailto:edujbarrios@outlook.com)
+Eduardo J. Barrios / [edujbarrios@outlook.com](mailto:edujbarrios@outlook.com)
 
 ## License
 
