@@ -7,6 +7,9 @@ from collections.abc import Callable, Iterable
 from numbers import Real
 from typing import Any
 
+DEFAULT_SIMILARITY_THRESHOLD = 0.8
+DEFAULT_CONTAINMENT_THRESHOLD = 0.8
+
 
 def _normalize(text: str) -> str:
     if not isinstance(text, str):
@@ -69,9 +72,11 @@ def _find_groups(
     similarity_threshold: float,
     containment_threshold: float,
     n: int,
-) -> tuple[list[Any], list[set[tuple[str, ...]]], list[dict[str, Any]], list[list[int]]]:
+) -> tuple[list[Any], list[str], list[dict[str, Any]], list[list[int]]]:
     items = list(chunks)
     texts = [key(item) for item in items]
+    if any(not isinstance(text, str) for text in texts):
+        raise TypeError("key must return a string for every chunk")
     grams = [_word_ngrams(text, n) for text in texts]
     parents = list(range(len(items)))
 
@@ -102,4 +107,123 @@ def _find_groups(
     for index in range(len(items)):
         components.setdefault(find(index), []).append(index)
     groups = [indices for indices in components.values() if len(indices) > 1]
-    return items, grams, pairs, groups
+    return items, texts, pairs, groups
+
+
+def _identity(value: Any) -> Any:
+    return value
+
+
+def _prepare(
+    chunks: Iterable[Any],
+    key: Callable[[Any], str] | None,
+    similarity_threshold: float,
+    containment_threshold: float,
+    n: int,
+) -> tuple[list[Any], list[str], list[dict[str, Any]], list[list[int]]]:
+    if isinstance(chunks, (str, bytes)):
+        raise TypeError("chunks must be a non-string iterable")
+    try:
+        iter(chunks)
+    except TypeError as error:
+        raise TypeError("chunks must be a non-string iterable") from error
+    extractor = _identity if key is None else key
+    if not callable(extractor):
+        raise TypeError("key must be callable or None")
+    similarity_limit = _validate_threshold(similarity_threshold, "similarity_threshold")
+    containment_limit = _validate_threshold(containment_threshold, "containment_threshold")
+    items, texts, pairs, groups = _find_groups(
+        chunks,
+        key=extractor,
+        similarity_threshold=similarity_limit,
+        containment_threshold=containment_limit,
+        n=n,
+    )
+    return items, texts, pairs, groups
+
+
+def _representative(indices: list[int], texts: list[str], strategy: str) -> int:
+    if strategy == "first":
+        return indices[0]
+    if strategy == "longest":
+        return max(indices, key=lambda index: len(texts[index]))
+    raise ValueError("strategy must be 'longest' or 'first'")
+
+
+def inspect_context(
+    chunks: Iterable[Any],
+    *,
+    strategy: str = "longest",
+    key: Callable[[Any], str] | None = None,
+    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    containment_threshold: float = DEFAULT_CONTAINMENT_THRESHOLD,
+    n: int = 3,
+) -> dict[str, Any]:
+    """Inspect chunks and return a serializable lexical-redundancy report.
+
+    A pair is redundant when its Jaccard score reaches ``similarity_threshold``
+    or either directional containment score reaches ``containment_threshold``.
+    The defaults are practical heuristics, not universal statistical cutoffs.
+    """
+    if strategy not in {"longest", "first"}:
+        raise ValueError("strategy must be 'longest' or 'first'")
+    items, texts, pairs, components = _prepare(
+        chunks, key, similarity_threshold, containment_threshold, n
+    )
+    groups = []
+    removable: list[int] = []
+    for indices in components:
+        keep = _representative(indices, texts, strategy)
+        remove = [index for index in indices if index != keep]
+        removable.extend(remove)
+        group_pairs = [
+            pair for pair in pairs if pair["indices"][0] in indices and pair["indices"][1] in indices
+        ]
+        groups.append({
+            "indices": indices,
+            "representative": keep,
+            "remove_indices": remove,
+            "max_similarity": max(pair["similarity"] for pair in group_pairs),
+            "max_containment": max(max(pair["containment"]) for pair in group_pairs),
+        })
+    removable.sort()
+    total = len(items)
+    return {
+        "total_chunks": total,
+        "redundant_pairs": len(pairs),
+        "redundancy_groups": len(groups),
+        "redundant_chunks": len(removable),
+        "redundancy_ratio": len(removable) / total if total else 0.0,
+        "estimated_redundant_characters": sum(len(texts[index]) for index in removable),
+        "estimated_redundant_words": sum(len(texts[index].split()) for index in removable),
+        "removable_indices": removable,
+        "pairs": pairs,
+        "groups": groups,
+    }
+
+
+def deduplicate(
+    chunks: Iterable[Any],
+    *,
+    strategy: str = "longest",
+    key: Callable[[Any], str] | None = None,
+    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    containment_threshold: float = DEFAULT_CONTAINMENT_THRESHOLD,
+    n: int = 3,
+) -> list[Any]:
+    """Return chunks with lexical duplicates removed, preserving input order.
+
+    ``longest`` keeps the longest text in each group (and the first on ties).
+    ``first`` keeps the earliest chunk. Original objects are returned unchanged.
+    """
+    items = list(chunks) if not isinstance(chunks, (str, bytes)) else chunks
+    report = inspect_context(
+        items,
+        strategy=strategy,
+        key=key,
+        similarity_threshold=similarity_threshold,
+        containment_threshold=containment_threshold,
+        n=n,
+    )
+    remove = set(report["removable_indices"])
+    return [item for index, item in enumerate(items) if index not in remove]
