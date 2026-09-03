@@ -77,6 +77,16 @@ def test_report_consistency_and_longest_selection():
     assert deduplicate(chunks) == chunks[1:]
 
 
+def test_default_containment_matches_overlapping_rag_chunks():
+    chunks = [
+        "Python is a programming language.",
+        "Python is a programming language used for data science.",
+        "Madrid is the capital of Spain.",
+    ]
+    assert inspect_context(chunks)["redundant_pairs"] == 1
+    assert deduplicate(chunks) == chunks[1:]
+
+
 def test_first_strategy_and_no_mutation():
     chunks = ["alpha beta gamma", "alpha beta gamma delta"]
     original = chunks.copy()
